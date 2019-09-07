@@ -8,7 +8,10 @@ import "./Libraries/Strings.sol";
 
 contract OwnableDelegateProxy { }
 
-contract GlarbPopulation {
+contract GlarbPopulation is ERC721Full, ERC721Pausable, MinterRole, Ownable {
+  using SafeMath for uint256;
+  using Strings for string;
+
   struct Glarb {
     address owner;
     string displayName;
