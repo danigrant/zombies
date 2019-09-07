@@ -14,10 +14,6 @@ contract ProxyRegistry {
 contract Glarb is ERC721Full, ERC721Pausable, MinterRole, Ownable {
   using SafeMath for uint256;
 
-  //event NewHuman(uint id, address owner, uint glarbType);
-  //event HumanTurned(uint id, address owner, uint glarbType);
-  //event ZombieTurned(uint id, address owner, uint glarbType);
-
   enum GlarbType {
     HUMAN,
     ZOMBIE,
@@ -82,7 +78,7 @@ contract Glarb is ERC721Full, ERC721Pausable, MinterRole, Ownable {
 
   // range of [0,250]
   function _lolrandom() internal view returns (uint8) {
-    return uint8(uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty)))%251);
+    return uint8(uint256(keccak256(abi.encodePacked(block.number, totalSupply(), block.timestamp, block.difficulty)))%251);
   }
 
   function _checkIfMultiply() internal view returns (bool) {

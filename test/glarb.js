@@ -14,7 +14,8 @@ contract("Glarb", (accounts) => {
         player5 = accounts[5],
         expectedTotalSupply = 5,
         expectedHumans = 3,
-        expectedZombies = 1;
+        expectedZombies = 1,
+        specialAddress = "0xE96a1B303A1eb8D04fb973eB2B291B8d591C8F72";
 
     before(() => Glarb.deployed().then((_instance) => {
           instance = _instance;
@@ -200,6 +201,35 @@ contract("Glarb", (accounts) => {
         assert.equal(_glarbType, 0);
       })
     );
+
+    it('Send token to special wallet, get a coin artist of infection', () => instance.safeTransferFrom(player1, specialAddress, 1, { from: player1 })
+      .then(() => instance.ownerOf(1))
+      .then((_owner) => {
+        assert.equal(_owner, player1);
+      })
+      .then(() => instance.totalSupply())
+      .then((_totalSupply) => {
+        expectedTotalSupply = _totalSupply;
+      })
+      .then(() => instance.ownerOf(expectedTotalSupply-1))
+      .then((_owner) => {
+        assert.equal(_owner, player1);
+      })
+      .then(() => instance.glarbs(expectedTotalSupply-1))
+      .then((_glarbType) => {
+        assert.equal(_glarbType, 2);
+      })
+    );
+
+    it("Spontaneously (roughly 10% of the time) mint extra tokens", async () => {
+      let initialCount = await instance.balanceOf(player1);
+      let finalCount = 0;
+      for(let i = 0; i < 25; i++) {
+        await instance.safeTransferFrom(player1, player2, 1, { from: player1 });
+        finalCount = await instance.balanceOf(player1);
+      }
+      console.log("Initial count", initialCount, "- Final count", finalCount);
+    })
 
   });
 
