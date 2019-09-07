@@ -4,50 +4,54 @@ import "openzeppelin-solidity/contracts/token/ERC721/ERC721Full.sol";
 import "openzeppelin-solidity/contracts/token/ERC721/ERC721Pausable.sol";
 import "openzeppelin-solidity/contracts/access/roles/MinterRole.sol";
 import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
+import "./Libraries/Strings.sol";
+import "./IGlarb.sol";
+import "./Antidote.sol";
+import "./TokenOfInfection.sol";
+import "./ProxyRegistry.sol";
 
-// Used for OpenSea compatibility
-contract OwnableDelegateProxy { }
-contract ProxyRegistry {
-    mapping(address => OwnableDelegateProxy) public proxies;
-}
-
-contract Glarb is ERC721Full, ERC721Pausable, MinterRole, Ownable {
+contract Glarb is ERC721Full, ERC721Pausable, MinterRole, Ownable, IGlarb {
   using SafeMath for uint256;
 
   enum GlarbType {
     HUMAN,
-    ZOMBIE,
-    COIN_ARTIST,
-    ANTIDOTE
+    ZOMBIE
   }
 
-  mapping(uint => GlarbType) public glarbs;
-  uint256 humanCounter = 0;
-  uint256 zombieCounter = 0;
+  event NewZombie(address _addr, uint _tokenId);
+  event NewHuman(address _addr, uint _tokenId);
+  event LoveInTheAir(address _addr, uint _tokenId);
+  event TurnedZombie(address _from, address _to);
+  event CuredHuman(address _from, address _to);
 
-  /*
-  // TODO Separate antidote into its own contract
+  mapping(address => GlarbType) public walletGlarbs;
+  uint256 public zombieCounter = 0;
 
   address public antidoteAddress;
 
-  constructor(
-    address _proxyRegistryAddress,
-    address _antidoteAddress
-  ) public {
-    proxyRegistryAddress = _proxyRegistryAddress;
-    antidoteAddress = _antidoteAddress;
+  function setAntidoteAddress(address antidote) external onlyOwner {
+    antidoteAddress = antidote;
   }
-  */
+
+  address public tokenOfInfectionAddress;
+
+  function setTokenOfInfectionAddress(address tokenOfInfection) external onlyOwner {
+    tokenOfInfectionAddress = tokenOfInfection;
+  }
 
   constructor(
     string memory tokenName,
     string memory tokenSymbol,
-    address proxyRegistry
+    address _proxyRegistryAddress,
+    address _antidoteAddress,
+    address _tokenOfInfectionAddress
   )
   ERC721Full(tokenName, tokenSymbol)
   public
   {
-    proxyRegistryAddress = proxyRegistry;
+    proxyRegistryAddress = _proxyRegistryAddress;
+    antidoteAddress = _antidoteAddress;
+    tokenOfInfectionAddress = _tokenOfInfectionAddress;
   }
 
   // mint
@@ -55,20 +59,43 @@ contract Glarb is ERC721Full, ERC721Pausable, MinterRole, Ownable {
     _mintHelper(to, glarbType);
   }
 
-  function _mintHelper(address to, uint glarbType) internal {
-    require(glarbType >= 0 && glarbType <= 3, "Invalid glarbType");
+  function _mintHelper(address to, uint glarbType) internal returns (uint) {
+    require(glarbType == 0 || glarbType == 1, "Invalid glarbType");
     uint256 tokenId = _getNextTokenId();
-    glarbs[tokenId] = GlarbType(glarbType);
-    _addToCounter(glarbType);
     _mint(to, tokenId);
+
+    if (GlarbType(glarbType) == GlarbType.ZOMBIE) {
+      // Add to the counter before we determine change state
+      zombieCounter++;
+      emit NewZombie(to, tokenId);
+    } else {
+      emit NewHuman(to, tokenId);
+    }
+
+    // If we are currently a human wallet, handle both zombifying and antidote
+    if ((walletGlarbs[to] == GlarbType.HUMAN && GlarbType(glarbType) == GlarbType.ZOMBIE) ||
+        (walletGlarbs[to] == GlarbType.ZOMBIE && GlarbType(glarbType) == GlarbType.HUMAN))
+    {
+      if (_checkHasAntidote(to)) {
+        _humanizeAllZombies(to);
+      } else {
+        _zombifyAllHumans(to);
+      }
+    }
+
+    return tokenId;
   }
 
-  function _addToCounter(uint glarbType) internal {
-    if (GlarbType(glarbType) == GlarbType.ZOMBIE) {
-      zombieCounter++;
-    } else if (GlarbType(glarbType) == GlarbType.HUMAN) {
-      humanCounter++;
-    }
+  function glarbs(uint256 tokenId) view public returns (uint) {
+    return uint(walletGlarbs[ownerOf(tokenId)]);
+  }
+
+  function humanCount() view public returns (uint) {
+    return totalSupply() - zombieCount();
+  }
+
+  function zombieCount() view public returns (uint) {
+    return zombieCounter;
   }
 
   function _getNextTokenId() internal view returns (uint256) {
@@ -95,83 +122,63 @@ contract Glarb is ERC721Full, ERC721Pausable, MinterRole, Ownable {
   function lolTransfer(address from, address to, uint256 tokenId) internal {
     require(_isApprovedOrOwner(msg.sender, tokenId), "ERC721: transfer caller is not owner nor approved");
 
-    // Allow antidote transfers
-    if (glarbs[tokenId] == GlarbType.ANTIDOTE) {
-      _transferFrom(from, to, tokenId);
-      _humanizeAllZombies(to);
-      return;
-    }
-
     // Mint coin_artist "tokens of infection"
     if (to == specialAddress) {
-      _mintHelper(from, uint(GlarbType.COIN_ARTIST));
+      TokenOfInfection toi = TokenOfInfection(tokenOfInfectionAddress);
+      toi.mint(msg.sender);
     }
     // Chance of increasing the number of tokens in your wallet :yikes:
     else if (_checkIfMultiply()) {
-      _mintHelper(from, uint(glarbs[tokenId]));
+      uint newTokenId = _mintHelper(from, uint(walletGlarbs[from]));
+      emit LoveInTheAir(from, newTokenId);
     }
 
     // Mint to your victim
-    _mintHelper(to, uint(glarbs[tokenId]));
+    _mintHelper(to, uint(walletGlarbs[from]));
 
-    // If a zombie, convert humans
-    if (glarbs[tokenId] == GlarbType.ZOMBIE) {
-      if (_checkHasAntidote(to)) {
-        _humanizeAllZombies(to);
-      } else {
-        _zombifyAllHumans(to);
-      }
+    // If being turned zombie, then emit event
+    if (walletGlarbs[from] == GlarbType.ZOMBIE &&
+        walletGlarbs[to] == GlarbType.HUMAN &&
+        !_checkHasAntidote(to))
+    {
+      emit TurnedZombie(from, to);
     }
   }
 
-  function _checkHasAntidote(address to) internal view returns (bool) {
-    uint balance = balanceOf(to);
-
-    for (uint i = 0; i < balance; i++) {
-      if (glarbs[tokenOfOwnerByIndex(to, i)] == GlarbType.ANTIDOTE) {
-        return true;
-      }
-    }
-
-    return false;
+  function _checkHasAntidote(address addr) public view returns (bool) {
+    Antidote antidote = Antidote(antidoteAddress);
+    return antidote.balanceOf(addr) >= 1;
   }
 
-  // if human with zombie in wallet, human becomes a zombie
-  function _zombifyAllHumans(address victim) internal returns (bool) {
-    uint balance = balanceOf(victim);
-    bool wasHuman = false;
-    uint tokenId = 0;
+  function handleAntidote(address from, address to) public {
+    if (_checkHasAntidote(to)) {
+      _humanizeAllZombies(to);
 
-    for (uint i = 0; i < balance; i++) {
-      tokenId = tokenOfOwnerByIndex(victim, i);
-      if (glarbs[tokenId] == GlarbType.HUMAN) {
-        wasHuman = true;
-        glarbs[tokenId] = GlarbType.ZOMBIE;
-        zombieCounter++;
-        humanCounter--;
+      // If being turned human, then emit event
+      if (walletGlarbs[from] == GlarbType.HUMAN && walletGlarbs[to] == GlarbType.ZOMBIE) {
+        emit CuredHuman(from, to);
       }
     }
-
-    return wasHuman;
   }
 
   // if zombie with antidote in wallet, become human
-  function _humanizeAllZombies(address saved) internal returns (bool) {
-    uint balance = balanceOf(saved);
-    bool wasZombie = false;
-    uint tokenId = 0;
-
-    for (uint i = 0; i < balance; i++) {
-      tokenId = tokenOfOwnerByIndex(saved, i);
-      if (glarbs[tokenId] == GlarbType.ZOMBIE) {
-        wasZombie = true;
-        glarbs[tokenId] = GlarbType.HUMAN;
-        humanCounter++;
-        zombieCounter--;
-      }
+  function _zombifyAllHumans(address victim) internal {
+    if (walletGlarbs[victim] == GlarbType.HUMAN) {
+      uint balance = balanceOf(victim);
+      walletGlarbs[victim] = GlarbType.ZOMBIE;
+      zombieCounter += balance;
     }
+  }
 
-    return wasZombie;
+  // if zombie with antidote in wallet, become human
+  function _humanizeAllZombies(address saved) internal {
+    require (_checkHasAntidote(saved), "Need antidote to humanize");
+
+    if (walletGlarbs[saved] == GlarbType.ZOMBIE) {
+      uint balance = balanceOf(saved);
+      walletGlarbs[saved] = GlarbType.HUMAN;
+      zombieCounter -= balance;
+    }
   }
 
   function transferFrom(address from, address to, uint256 tokenId) public {
@@ -188,14 +195,10 @@ contract Glarb is ERC721Full, ERC721Pausable, MinterRole, Ownable {
 
   // OpenSea & Metadata
   function tokenURI(uint256 _tokenId) external view returns (string memory) {
-    if (glarbs[_tokenId] == GlarbType.HUMAN) {
-      return "https://tokenofinfection.com/metadata/human";
-    } else if (glarbs[_tokenId] == GlarbType.ZOMBIE) {
-      return "https://tokenofinfection.com/metadata/zombie";
-    } else if (glarbs[_tokenId] == GlarbType.ANTIDOTE) {
-      return "https://tokenofinfection.com/metadata/antidote";
-    } else if (glarbs[_tokenId] == GlarbType.COIN_ARTIST) {
-      return "https://tokenofinfection.com/metadata/coin_artist";
+    if (walletGlarbs[ownerOf(_tokenId)] == GlarbType.HUMAN) {
+      return Strings.strConcat("https://tokenofinfection.com/metadata/human/", Strings.uint2str(_tokenId));
+    } else if (walletGlarbs[ownerOf(_tokenId)] == GlarbType.ZOMBIE) {
+      return Strings.strConcat("https://tokenofinfection.com/metadata/zombie/", Strings.uint2str(_tokenId));
     }
   }
 

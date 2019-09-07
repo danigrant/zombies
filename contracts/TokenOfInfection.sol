@@ -5,10 +5,9 @@ import "openzeppelin-solidity/contracts/token/ERC721/ERC721Pausable.sol";
 import "openzeppelin-solidity/contracts/access/roles/MinterRole.sol";
 import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
 import "./Libraries/Strings.sol";
-import "./IGlarb.sol";
 import "./ProxyRegistry.sol";
 
-contract Antidote is ERC721Full, ERC721Pausable, MinterRole, Ownable {
+contract TokenOfInfection is ERC721Full, ERC721Pausable, MinterRole, Ownable {
 
   constructor(
     string memory tokenName,
@@ -21,48 +20,10 @@ contract Antidote is ERC721Full, ERC721Pausable, MinterRole, Ownable {
     proxyRegistryAddress = proxyRegistry;
   }
 
-  address public glarbAddress;
-
-  function setGlarbAddress(address glarb) external onlyOwner {
-    glarbAddress = glarb;
-  }
-
   // mint
-  function mint(address to) external onlyMinter {
-    _mintHelper(to);
-  }
-
-  function _updateGlarbsWithAntidote(address addr) internal {
-    IGlarb glarb = IGlarb(glarbAddress);
-    glarb.handleAntidote(msg.sender, addr);
-  }
-
-  function _mintHelper(address to) internal {
+  function mint(address to) public onlyMinter {
     uint256 tokenId = _getNextTokenId();
     _mint(to, tokenId);
-    _updateGlarbsWithAntidote(to);
-  }
-
-  function transferFrom(address from, address to, uint256 tokenId) public {
-    //solhint-disable-next-line max-line-length
-    require(_isApprovedOrOwner(msg.sender, tokenId), "ERC721: transfer caller is not owner nor approved");
-
-    _transferFrom(from, to, tokenId);
-    _updateGlarbsWithAntidote(to);
-  }
-
-  uint public antidotePrice = 50000000000000000;
-
-  // We only let you buy antidote right now
-  function purchase() external payable whenNotPaused {
-    require(msg.value == antidotePrice, "Invalid payment for option");
-    _mintHelper(msg.sender);
-  }
-
-  // We only let you buy antidote right now
-  function purchaseFor(address to) external payable whenNotPaused {
-    require(msg.value == antidotePrice, "Invalid payment for option");
-    _mintHelper(to);
   }
 
   function _getNextTokenId() internal view returns (uint256) {
@@ -72,7 +33,7 @@ contract Antidote is ERC721Full, ERC721Pausable, MinterRole, Ownable {
 
   // OpenSea & Metadata
   function tokenURI(uint256 _tokenId) external view returns (string memory) {
-    return Strings.strConcat("https://tokenofinfection.com/metadata/antidote/", Strings.uint2str(_tokenId));
+    return Strings.strConcat("https://tokenofinfection.com/metadata/tokenofinfection/", Strings.uint2str(_tokenId));
   }
 
   /**

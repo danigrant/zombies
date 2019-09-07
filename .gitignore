@@ -1,3 +1,4 @@
+build/
 *private_key*
 node_modules
 *~
